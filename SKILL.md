@@ -160,6 +160,130 @@ hermes service install
 hermes service start
 ```
 
+## 服务器部署（远程 Linux / VPS）
+
+如果用户想把 Hermes 部署到远程服务器上（而不是本地），先确认：
+
+1. **SSH 连接信息**：`用户名@IP地址`，端口（默认 22），密钥路径（可选）
+2. **服务器系统**：Ubuntu/Debian/CentOS/Alpine
+
+### 远程执行方式
+
+所有命令通过 SSH 执行：
+
+```bash
+ssh user@host "命令"
+```
+
+如果有密钥：
+```bash
+ssh -i /path/to/key user@host "命令"
+```
+
+### Step 1: 远程安装 Hermes
+
+```bash
+ssh user@host "curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash"
+```
+
+### Step 2: 远程写配置
+
+用 heredoc 通过 SSH 写文件：
+
+```bash
+ssh user@host "mkdir -p ~/.hermes && cat > ~/.hermes/config.yaml << 'CONF'
+model:
+  default: 模型名
+  provider: provider名
+  base_url: URL（如需要）
+CONF"
+```
+
+```bash
+ssh user@host "cat > ~/.hermes/.env << 'ENV'
+API_KEY变量=用户的Key
+TELEGRAM_BOT_TOKEN=Token（如有）
+TELEGRAM_ALLOWED_USERS=ID（如有）
+TELEGRAM_HOME_CHANNEL=ID（如有）
+ENV"
+```
+
+### Step 3: 远程验证
+
+```bash
+ssh user@host "export PATH=\$HOME/.hermes/bin:\$PATH && hermes doctor"
+```
+
+### Step 4: 安装为 systemd 服务（推荐）
+
+服务器上建议用 systemd 后台运行，而不是 launchd。
+
+```bash
+ssh user@host "export PATH=\$HOME/.hermes/bin:\$PATH && hermes service install && hermes service start"
+```
+
+如果 `hermes service` 不支持 systemd，手动创建 service：
+
+```bash
+ssh user@host "sudo tee /etc/systemd/system/hermes.service > /dev/null << 'SVC'
+[Unit]
+Description=Hermes Agent
+After=network.target
+
+[Service]
+Type=simple
+User=$USER
+Environment=PATH=/home/$USER/.hermes/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/$USER/.hermes/bin/hermes
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SVC"
+
+ssh user@host "sudo systemctl daemon-reload && sudo systemctl enable hermes && sudo systemctl start hermes"
+```
+
+配了 Telegram 的需要额外启动 gateway：
+
+```bash
+ssh user@host "sudo tee /etc/systemd/system/hermes-gateway.service > /dev/null << 'SVC'
+[Unit]
+Description=Hermes Gateway (Telegram)
+After=network.target hermes.service
+
+[Service]
+Type=simple
+User=$USER
+Environment=PATH=/home/$USER/.hermes/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=/home/$USER/.hermes/.env
+ExecStart=/home/$USER/.hermes/bin/hermes gateway
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+SVC"
+
+ssh user@host "sudo systemctl daemon-reload && sudo systemctl enable hermes-gateway && sudo systemctl start hermes-gateway"
+```
+
+### Step 5: 验证服务状态
+
+```bash
+ssh user@host "systemctl status hermes hermes-gateway"
+```
+
+### 服务器部署注意事项
+
+1. **代理**：服务器如果在国内，Telegram 同样需要代理，检测方式同本地
+2. **防火墙**：Hermes 不需要入站端口，只需出站 HTTPS
+3. **内存**：最低 512MB，推荐 1GB+
+4. **后台运行**：一定要用 systemd，不要用 nohup 或 screen
+5. **日志查看**：`journalctl -u hermes -f` 实时看日志
+6. **重启**：`sudo systemctl restart hermes`
+
 ## 常见坑
 
 1. **hermes 命令找不到**：重新加载 shell 或 `export PATH="$HOME/.hermes/bin:$PATH"`
@@ -169,6 +293,8 @@ hermes service start
 5. **YAML 缩进**：用空格不用 Tab
 6. **.env 不加引号**：`KEY=sk-xxx` 不是 `KEY="sk-xxx"`
 7. **base_url 末尾**：custom 端点通常要带 `/v1`
+8. **服务器上 hermes doctor 报错**：可能缺少依赖，Ubuntu 先跑 `apt update && apt install -y python3 nodejs git`
+9. **systemd 服务起不来**：检查 `journalctl -u hermes -e` 看具体错误
 
 ## 模型切换
 

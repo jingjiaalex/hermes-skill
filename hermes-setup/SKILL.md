@@ -284,10 +284,73 @@ ssh user@host "systemctl status hermes hermes-gateway"
 5. **日志查看**：`journalctl -u hermes -f` 实时看日志
 6. **重启**：`sudo systemctl restart hermes`
 
+## Telegram Bot 不回复？完整排查
+
+这是国内用户最常碰到的问题。Hermes CLI 能正常对话，但 Telegram Bot 发消息没反应。原因几乎都是 **api.telegram.org 被墙了**。
+
+### 排查步骤
+
+**Step 1: 确认代理能不能通**
+
+```bash
+# 试常见代理端口
+curl -s --connect-timeout 3 -x http://127.0.0.1:7897 https://api.telegram.org/bot你的TOKEN/getMe
+curl -s --connect-timeout 3 -x http://127.0.0.1:7890 https://api.telegram.org/bot你的TOKEN/getMe
+curl -s --connect-timeout 3 -x http://127.0.0.1:1087 https://api.telegram.org/bot你的TOKEN/getMe
+```
+
+哪个返回了 JSON（包含 `"ok":true`），哪个端口就是能用的。
+
+**Step 2: 写代理到 .env**
+
+```bash
+# 在 ~/.hermes/.env 里加这两行（端口换成你测通的那个）
+HTTPS_PROXY=http://127.0.0.1:7897
+HTTP_PROXY=http://127.0.0.1:7897
+```
+
+**⚠️ 注意事项：**
+- 不加引号：`HTTPS_PROXY=http://127.0.0.1:7897` 对，`HTTPS_PROXY="http://..."` 错
+- 大写：必须是 `HTTPS_PROXY` 不是 `https_proxy`
+- 两个都要写：`HTTPS_PROXY` 和 `HTTP_PROXY` 都要配，缺一不可
+
+**Step 3: 重启 hermes gateway**
+
+本地：
+```bash
+# 如果用了 launchd
+hermes service restart
+# 或者手动杀掉重开
+pkill -f "hermes gateway" && hermes gateway
+```
+
+服务器：
+```bash
+sudo systemctl restart hermes-gateway
+```
+
+**Step 4: 验证 Bot 状态**
+
+```bash
+# 直接调 Telegram API 测试
+curl -s -x http://127.0.0.1:7897 https://api.telegram.org/bot你的TOKEN/getUpdates | head -200
+```
+
+能看到消息列表就说明通了。回 Telegram 发条消息试试。
+
+### 还是不行？
+
+- **代理软件没开**：Clash/V2Ray/Surge 得是运行状态，而且开了"允许局域网连接"
+- **代理端口不对**：打开代理软件看实际的 HTTP 代理端口，不一定是 7897
+- **代理只走了 socks5**：Hermes 需要 HTTP 代理，不是 SOCKS5。Clash 一般同时提供两种，但端口不同
+- **服务器没有代理**：VPS 如果在国内，要么装代理软件，要么用海外 VPS
+- **Token 填错了**：确认 `TELEGRAM_BOT_TOKEN` 是 BotFather 给的完整 Token（格式：`123456789:ABCdef...`）
+- **没配 TELEGRAM_ALLOWED_USERS**：`.env` 里必须有 `TELEGRAM_ALLOWED_USERS=你的数字ID`，否则 Bot 不响应任何人
+
 ## 常见坑
 
 1. **hermes 命令找不到**：重新加载 shell 或 `export PATH="$HOME/.hermes/bin:$PATH"`
-2. **Telegram 连不上**：国内必须配代理（7897/7890/1087）
+2. **Telegram Bot 不回复**：见上方完整排查流程
 3. **GPT 模型名**：走 custom 时写 `gpt-5.4` 不是 `openai/gpt-5.4`
 4. **Claude 走 custom 也行**：OpenAI 兼容端点同时支持 Claude 模型名
 5. **YAML 缩进**：用空格不用 Tab
